@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Backtest Lab</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d3646;
+    --fg:#e6edf3; --muted:#8b98a9; --accent:#4da3ff; --green:#3fb950; --red:#f85149;
+    --amber:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:18px 22px 60px}
+  h1{font-size:20px;margin:0 0 2px}
+  h2{font-size:14px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+  label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted)}
+  select,input[type=number],input[type=text]{background:var(--panel2);border:1px solid var(--border);color:var(--fg);
+    border-radius:6px;padding:6px 8px;font-size:13px;min-width:70px}
+  input[type=number]{width:86px}
+  button{background:var(--accent);border:none;color:#04121f;font-weight:600;border-radius:6px;
+    padding:8px 14px;font-size:13px;cursor:pointer}
+  button.secondary{background:var(--panel2);color:var(--fg);border:1px solid var(--border);font-weight:500}
+  button:hover{filter:brightness(1.12)}
+  button:disabled{opacity:.5;cursor:wait}
+  #status{font-size:12px;color:var(--muted);margin-top:8px;min-height:16px}
+  #status.err{color:var(--red)} #status.ok{color:var(--green)}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  th:first-child,td:first-child{text-align:left}
+  tr.sel{background:#20304a}
+  tr.clickable{cursor:pointer}
+  tr.clickable:hover{background:#1b2536}
+  .pos{color:var(--green)} .neg{color:var(--red)}
+  .strat-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}
+  .strat-row:last-child{border-bottom:none}
+  .strat-name{width:190px;font-weight:600;font-size:13px;display:flex;align-items:center;gap:7px}
+  .swatch{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .strat-row label{flex-direction:row;align-items:center;gap:4px}
+  .strat-row input[type=number]{width:64px;padding:4px 6px}
+  canvas{width:100%;display:block}
+  .chart-wrap{position:relative}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  .badge{display:inline-block;background:var(--panel2);border:1px solid var(--border);border-radius:20px;
+    padding:2px 10px;font-size:11px;color:var(--muted);margin-left:8px}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-top:6px}
+  .legend span{display:flex;align-items:center;gap:5px}
+  #tradeLog{max-height:300px;overflow:auto}
+  .hidden{display:none}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>Crypto Backtest Lab <span class="badge" id="dataBadge">no data</span></h1>
+<div class="sub">Compare algorithmic strategies on real or synthetic OHLCV. Signals execute next-bar open — no lookahead. Long-only, single asset.</div>
+
+<div class="panel">
+  <h2>Data</h2>
+  <div class="row">
+    <label>Symbol<select id="symbol">
+      <option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>BNBUSDT</option>
+      <option>XRPUSDT</option><option>DOGEUSDT</option><option>ADAUSDT</option><option>LINKUSDT</option>
+    </select></label>
+    <label>Interval<select id="interval"><option value="1d">1d</option><option value="4h">4h</option><option value="1h">1h</option></select></label>
+    <label>Bars<input type="number" id="nBars" value="1000" min="200" max="3000" step="100"></label>
+    <button id="btnLive">Load live (Binance)</button>
+    <button id="btnSynth" class="secondary">Synthetic data</button>
+    <button id="btnCsv" class="secondary">Upload CSV</button>
+    <input type="file" id="csvFile" accept=".csv" class="hidden">
+  </div>
+  <div id="status">Load data to begin. Live data uses Binance public klines (no key needed); synthetic works fully offline.</div>
+</div>
+
+<div class="panel">
+  <h2>Simulation settings</h2>
+  <div class="row">
+    <label>Capital ($)<input type="number" id="capital" value="10000" min="100" step="1000"></label>
+    <label>Fee (bps/side)<input type="number" id="fee" value="10" min="0" step="1"></label>
+    <label>Slippage (bps/side)<input type="number" id="slip" value="5" min="0" step="1"></label>
+    <label>Stop-loss (%)<input type="number" id="stop" value="0" min="0" max="90" step="1"></label>
+    <label>Out-of-sample (%)<input type="number" id="oos" value="30" min="0" max="80" step="5"></label>
+    <label style="flex-direction:row;align-items:center"><input type="checkbox" id="logScale"> Log equity</label>
+  </div>
+  <div class="note">0.10% fee + 0.05% slippage ≈ typical retail taker cost. Stop-loss 0 = disabled. OOS split holds out the most recent bars so you can see whether parameters were fit to noise.</div>
+</div>
+
+<div class="panel">
+  <h2>Strategies</h2>
+  <div id="stratList"></div>
+  <div class="row" style="margin-top:12px">
+    <button id="btnRun" disabled>Run backtests</button>
+    <button id="btnSweep" class="secondary" disabled>SMA parameter sweep</button>
+    <button id="btnExport" class="secondary" disabled>Export results CSV</button>
+  </div>
+</div>
+
+<div class="panel hidden" id="resultsPanel">
+  <h2>Comparison <span class="badge">click a row to inspect</span></h2>
+  <div style="overflow-x:auto"><table id="resultsTable"></table></div>
+  <div class="note" id="splitNote"></div>
+</div>
+
+<div class="panel hidden" id="equityPanel">
+  <h2>Equity curves</h2>
+  <div class="chart-wrap"><canvas id="equityChart" height="320"></canvas></div>
+  <div class="legend" id="equityLegend"></div>
+</div>
+
+<div class="grid2">
+  <div class="panel hidden" id="pricePanel">
+    <h2 id="priceTitle">Price & trades</h2>
+    <div class="chart-wrap"><canvas id="priceChart" height="260"></canvas></div>
+  </div>
+  <div class="panel hidden" id="ddPanel">
+    <h2 id="ddTitle">Drawdown</h2>
+    <div class="chart-wrap"><canvas id="ddChart" height="260"></canvas></div>
+  </div>
+</div>
+
+<div class="panel hidden" id="tradesPanel">
+  <h2 id="tradesTitle">Trade log</h2>
+  <div id="tradeLog"><table id="tradesTable"></table></div>
+</div>
+
+<div class="panel hidden" id="sweepPanel">
+  <h2>SMA crossover sweep — top 12</h2>
+  <div style="overflow-x:auto"><table id="sweepTable"></table></div>
+  <div class="note">Ranked by out-of-sample Sharpe when a split is set, else full-sample Sharpe. A grid search over ~30 combos will produce lucky winners by chance alone — treat the top row as a hypothesis, not an edge. Deflate expectations for the number of trials (see: deflated Sharpe ratio, López de Prado).</div>
+</div>
+
+<div class="panel hidden" id="wfPanel">
+  <h2>Walk-forward validation — SMA crossover</h2>
+  <div class="row" style="margin-bottom:12px">
+    <label>Train window (%):<input type="number" id="wfWindow" value="70" min="10" max="90" step="5"></label>
+    <label>Step size (%):<input type="number" id="wfStep" value="10" min="1" max="50" step="1"></label>
+  </div>
+  <div id="wfNote" class="note"></div>
+  <div style="overflow-x:auto"><table id="wfTable"><tr><th>Window</th><th>OOS Sharpe</th><th>Trades</th></tr></table></div>
+</div>
+
+<div class="panel">
+  <h2>Method & caveats</h2>
+  <div class="note">
+    • Signal computed on bar <i>t</i> close → position entered/exited at bar <i>t+1</i> open (no lookahead bias).<br>
+    • Fees + slippage charged on every fill; stop-loss fills at the stop price minus slippage when the bar's low breaches it (optimistic vs. gap-through risk).<br>
+    • Sharpe/Sortino annualized with √(bars/year): 365 for 1d, 2190 for 4h, 8760 for 1h. Risk-free rate assumed 0.<br>
+    • Long-only, 100% position sizing, one asset. No funding costs, no liquidation modeling, no partial fills, no maker rebates.<br>
+    • Survivorship bias: you picked the coin knowing it survived. Backtest ≠ future performance.
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================ utilities ============================ */
+const $ = id => document.getElementById(id);
+const fmt = (x,d=2) => (x==null||!isFinite(x)) ? "—" : x.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const pct = (x,d=1) => (x==null||!isFinite(x)) ? "—" : (x*100).toFixed(d)+"%";
+const cls = x => x>0?"pos":(x<0?"neg":"");
+const COLORS = ["#4da3ff","#3fb950","#f0883e","#bc8cff","#f85149","#39c5cf","#d29922","#ff7b9c","#7ee787"];
+const IV_MS = {"1h":3600e3,"4h":14400e3,"1d":86400e3};
+const IV_BPY = {"1h":8760,"4h":2190,"1d":365};
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(rng){let u=0,v=0;while(!u)u=rng();while(!v)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function setStatus(msg,kind){const s=$("status");s.textContent=msg;s.className=kind||""}
+const dtFmt = t => new Date(t).toISOString().slice(0,16).replace("T"," ");
+
+/* ============================ indicators ============================ */
+function sma(a,p){const o=new Array(a.length).fill(NaN);let s=0;for(let i=0;i<a.length;i++){s+=a[i];if(i>=p)s-=a[i-p];if(i>=p-1)o[i]=s/p}return o}
+function ema(a,p){const o=new Array(a.length).fill(NaN);const k=2/(p+1);let prev=null;for(let i=0;i<a.length;i++){if(i<p-1)continue;if(prev===null){let s=0;for(let j=0;j<p;j++)s+=a[j];prev=s/p}else prev=a[i]*k+prev*(1-k);o[i]=prev}return o}
+function rsi(a,p){const o=new Array(a.length).fill(NaN);let g=0,l=0;for(let i=1;i<a.length;i++){const d=a[i]-a[i-1];const up=Math.max(d,0),dn=Math.max(-d,0);if(i<=p){g+=up;l+=dn;if(i===p){g/=p;l/=p;o[i]=l===0?100:100-100/(1+g/l)}}else{g=(g*(p-1)+up)/p;l=(l*(p-1)+dn)/p;o[i]=l===0?100:100-100/(1+g/l)}}return o}
+function stdev(a,p){const o=new Array(a.length).fill(NaN);for(let i=p-1;i<a.length;i++){let m=0;for(let j=i-p+1;j<=i;j++)m+=a[j];m/=p;let v=0;for(let j=i-p+1;j<=i;j++)v+=(a[j]-m)**2;o[i]=Math.sqrt(v/p)}return o}
+function priorMax(a,p){const o=new Array(a.length).fill(NaN);for(let i=p;i<a.length;i++){let m=-Infinity;for(let j=i-p;j<i;j++)m=Math.max(m,a[j]);o[i]=m}return o}
+function priorMin(a,p){const o=new Array(a.length).fill(NaN);for(let i=p;i<a.length;i++){let m=Infinity;for(let j=i-p;j<i;j++)m=Math.min(m,a[j]);o[i]=m}return o}
+
+/* ============================ strategies ============================ */
+/* Each returns target position array (0/1) using only info up to bar t close. */
+const STRATS = [
+ {id:"bh", name:"Buy & Hold", color:"#8b98a9", params:[], signal:(b)=>b.close.map(()=>1)},
+ {id:"sma", name:"SMA crossover", color:COLORS[0],
+  params:[{k:"fast",label:"fast",def:20,min:2,max:200},{k:"slow",label:"slow",def:60,min:5,max:400}],
+  signal:(b,p)=>{const f=sma(b.close,p.fast),s=sma(b.close,p.slow);return b.close.map((_,i)=>(isFinite(f[i])&&isFinite(s[i])&&f[i]>s[i])?1:0)}},
+ {id:"ema", name:"EMA crossover", color:COLORS[1],
+  params:[{k:"fast",label:"fast",def:12,min:2,max:200},{k:"slow",label:"slow",def:26,min:5,max:400}],
+  signal:(b,p)=>{const f=ema(b.close,p.fast),s=ema(b.close,p.slow);return b.close.map((_,i)=>(isFinite(f[i])&&isFinite(s[i])&&f[i]>s[i])?1:0)}},
+ {id:"rsi", name:"RSI mean reversion", color:COLORS[2],
+  params:[{k:"period",label:"period",def:14,min:2,max:100},{k:"os",label:"buy <",def:30,min:5,max:50},{k:"ob",label:"sell >",def:55,min:50,max:95}],
+  signal:(b,p)=>{const r=rsi(b.close,p.period);const t=new Array(b.close.length).fill(0);let pos=0;
+    for(let i=0;i<r.length;i++){if(isFinite(r[i])){if(pos===0&&r[i]<p.os)pos=1;else if(pos===1&&r[i]>p.ob)pos=0}t[i]=pos}return t}},
+ {id:"bb", name:"Bollinger breakout", color:COLORS[3],
+  params:[{k:"period",label:"period",def:20,min:5,max:200},{k:"k",label:"k",def:2,min:0.5,max:4,step:0.1}],
+  signal:(b,p)=>{const m=sma(b.close,p.period),sd=stdev(b.close,p.period);const t=new Array(b.close.length).fill(0);let pos=0;
+    for(let i=0;i<m.length;i++){if(isFinite(m[i])){const up=m[i]+p.k*sd[i];if(pos===0&&b.close[i]>up)pos=1;else if(pos===1&&b.close[i]<m[i])pos=0}t[i]=pos}return t}},
+ {id:"macd", name:"MACD trend", color:COLORS[4],
+  params:[{k:"fast",label:"fast",def:12,min:2,max:100},{k:"slow",label:"slow",def:26,min:5,max:200},{k:"sig",label:"signal",def:9,min:2,max:50}],
+  signal:(b,p)=>{const f=ema(b.close,p.fast),s=ema(b.close,p.slow);const line=b.close.map((_,i)=>isFinite(f[i])&&isFinite(s[i])?f[i]-s[i]:NaN);
+    const valid=line.filter(isFinite);const sg=ema(valid,p.sig);const sigFull=new Array(line.length).fill(NaN);let vi=0;
+    for(let i=0;i<line.length;i++)if(isFinite(line[i]))sigFull[i]=sg[vi++];
+    return line.map((v,i)=>(isFinite(v)&&isFinite(sigFull[i])&&v>sigFull[i])?1:0)}},
+ {id:"don", name:"Donchian breakout", color:COLORS[5],
+  params:[{k:"entry",label:"entry N",def:20,min:5,max:200},{k:"exit",label:"exit N",def:10,min:3,max:100}],
+  signal:(b,p)=>{const hi=priorMax(b.high,p.entry),lo=priorMin(b.low,p.exit);const t=new Array(b.close.length).fill(0);let pos=0;
+    for(let i=0;i<t.length;i++){if(isFinite(hi[i])&&isFinite(lo[i])){if(pos===0&&b.close[i]>hi[i])pos=1;else if(pos===1&&b.close[i]<lo[i])pos=0}t[i]=pos}return t}},
+ {id:"mom", name:"Momentum (ROC)", color:COLORS[6],
+  params:[{k:"lb",label:"lookback",def:30,min:2,max:300},{k:"th",label:"entry %",def:5,min:0,max:100,step:1}],
+  signal:(b,p)=>{const t=new Array(b.close.length).fill(0);let pos=0;
+    for(let i=p.lb;i<t.length;i++){const roc=(b.close[i]/b.close[i-p.lb]-1)*100;if(pos===0&&roc>p.th)pos=1;else if(pos===1&&roc<0)pos=0;t[i]=pos}return t}},
+];
+
+/* ============================ data ============================ */
+let bars=null, dataLabel="", results=[], selected=null, sweepRows=[];
+
+function synthBars(n,seed){
+  const rng=mulberry32(seed||42);const out=[];let px=30000,vol=0.03,drift=0.0008,regime=0,left=0;
+  const end=Date.now();const start=end-(n-1)*IV_MS["1d"];
+  for(let i=0;i<n;i++){
+    if(left<=0){regime=Math.floor(rng()*3);left=40+Math.floor(rng()*120);
+      drift=[0.0025,-0.0018,0.0002][regime];vol=[0.025,0.045,0.015][regime]}
+    left--;vol=Math.max(0.008,Math.min(0.09,vol*0.94+0.06*(vol*(1+0.5*gauss(rng)))));
+    const r=drift+vol*gauss(rng);const open=px;px=Math.max(100,px*Math.exp(r));
+    const hi=Math.max(open,px)*(1+Math.abs(gauss(rng))*vol*0.4);
+    const lo=Math.min(open,px)*(1-Math.abs(gauss(rng))*vol*0.4);
+    out.push({t:start+i*IV_MS["1d"],o:open,h:hi,l:lo,c:px,v:1000*(1+rng())});
+  }
+  return out;
+}
+
+async function fetchKlines(sym,iv,n){
+  const hosts=["https://api.binance.com","https://data-api.binance.vision"];
+  const need=n, step=1000;let end=Date.now();const chunks=[];let got=0,lastErr=null;
+  for(const host of hosts){
+    try{
+      chunks.length=0;got=0;end=Date.now();
+      while(got<need){
+        const lim=Math.min(step,need-got);
+        const url=`${host}/api/v3/klines?symbol=${sym}&interval=${iv}&limit=${lim}&endTime=${end}`;
+        const r=await fetch(url);if(!r.ok)throw new Error("HTTP "+r.status);
+        const j=await r.json();if(!Array.isArray(j)||j.length===0)break;
+        chunks.unshift(...j);got+=j.length;end=j[0][0]-1;
+        if(j.length<lim)break;
+      }
+      if(chunks.length>0)return chunks.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5]}));
+      throw new Error("empty response");
+    }catch(e){lastErr=e}
+  }
+  throw lastErr||new Error("fetch failed");
+}
+
+function parseCsv(text){
+  const lines=text.trim().split(/\r?\n/);if(lines.length<50)throw new Error("CSV needs ≥50 rows");
+  const head=lines[0].toLowerCase().split(/[,;\t]/).map(s=>s.trim().replace(/"/g,""));
+  const hasHeader=head.some(h=>/close|time|date|open/.test(h));
+  const idx={};if(hasHeader){head.forEach((h,i)=>{
+    if(/^(open|o)$/.test(h)||h.includes("open"))idx.o=i;
+    else if(/^(high|h)$/.test(h)||h.includes("high"))idx.h=i;
+    else if(/^(low|l)$/.test(h)||h.includes("low"))idx.l=i;
+    else if(/^(close|c)$/.test(h)||h.includes("close")&&!h.includes("time"))idx.c=i;
+    else if(/time|date/.test(h)&&idx.t===undefined)idx.t=i;
+    else if(/volume|vol/.test(h))idx.v=i;
+  })}
+  if(idx.c===undefined){idx.t=0;idx.o=1;idx.h=2;idx.l=3;idx.c=4;idx.v=5}
+  const rows=hasHeader?lines.slice(1):lines;const out=[];
+  for(const ln of rows){
+    const c=ln.split(/[,;\t]/).map(s=>s.trim().replace(/"/g,""));
+    const close=parseFloat(c[idx.c]);if(!isFinite(close)||close<=0)continue;
+    let t=idx.t!==undefined?Date.parse(c[idx.t]):NaN;
+    if(!isFinite(t)){const num=parseFloat(c[idx.t]);if(isFinite(num))t=num>1e12?num:num*1000}
+    if(!isFinite(t))t=out.length?out[out.length-1].t+IV_MS["1d"]:Date.now()-rows.length*IV_MS["1d"];
+    const o=idx.o!==undefined&&isFinite(parseFloat(c[idx.o]))?parseFloat(c[idx.o]):(out.length?out[out.length-1].c:close);
+    const h=idx.h!==undefined&&isFinite(parseFloat(c[idx.h]))?parseFloat(c[idx.h]):Math.max(o,close);
+    const l=idx.l!==undefined&&isFinite(parseFloat(c[idx.l]))?parseFloat(c[idx.l]):Math.min(o,close);
+    out.push({t,o,h:Math.max(h,o,close),l:Math.min(l,o,close),c:close,v:idx.v!==undefined?parseFloat(c[idx.v])||0:0});
+  }
+  if(out.length<50)throw new Error("could not parse ≥50 valid rows");
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+
+function intervalGuess(b){
+  if(b.length<2)return "1d";const d=b[1].t-b[0].t;
+  return d<=4000e3?"1h":(d<=16000e3?"4h":"1d");
+}
+
+function onDataReady(label){
+  dataLabel=label;
+  $("dataBadge").textContent=`${label} · ${bars.length} bars`;
+  $("btnRun").disabled=false;$("btnSweep").disabled=false;
+  results=[];selected=null;sweepRows=[];
+  ["resultsPanel","equityPanel","pricePanel","ddPanel","tradesPanel","sweepPanel"].forEach(id=>$(id).classList.add("hidden"));
+  $("btnExport").disabled=true;
+}
+
+/* ============================ backtest engine ============================ */
+function getOpts() {
+  return {capital:Math.max(100,+$("capital").value||10000),
+    fee:(+ $("fee").value||0)/1e4, slip:(+ $("slip").value||0)/1e4,
+    stop:(+ $("stop").value||0)/100, oos:Math.min(80,Math.max(0,+$("oos").value||0))/100,
+    wfWindow:+$("wfWindow").value||70, wfStep:+$("wfStep").value||10};
+}
+
+function backtest(b,target,opts,bpy){
+  const n=b.length;let cash=opts.capital,units=0,entryPx=0,entryIdx=-1,canEnter=true;
+  const equity=new Array(n),posArr=new Array(n).fill(0),trades=[];
+  const buyCost=1+opts.fee+opts.slip, sellNet=1-opts.fee-opts.slip;
+  function enter(i,px){const p=px*buyCost;units=cash/p;cash=0;entryPx=px;entryIdx=i;posArr[i]=1}
+  function exit(i,px,reason){const proceeds=units*px*sellNet;const ret=proceeds/(units*entryPx*buyCost)-1;
+    trades.push({entryIdx,exitIdx:i,entryT:b[entryIdx].t,exitT:b[i].t,entryPx,exitPx:px,ret,bars:i-entryIdx,reason});
+    cash=proceeds;units=0;posArr[i]=0}
+  for(let i=0;i<n;i++){
+    const want=i>0?target[i-1]:0;
+    if(units>0&&want===0){exit(i,b[i].o,"signal");canEnter=true}
+    if(units===0&&want===1&&canEnter){enter(i,b[i].o)}
+    if(units>0&&opts.stop>0){
+      const stopPx=entryPx*(1-opts.stop);
+      if(b[i].l<=stopPx){exit(i,Math.min(stopPx,b[i].o),"stop");canEnter=false}
+    }
+    if(units===0&&target[i]===0)canEnter=true;
+    equity[i]=cash+units*b[i].c;
+    if(units>0)posArr[i]=1;
+  }
+  if(units>0)exit(n-1,b[n-1].c,"end");
+  equity[n-1]=cash;
+  return {equity,trades,posArr,opts,bpy};
+}
+
+function metrics(eq,trades,bpy,from,to){
+  from=from||0;to=(to===undefined?eq.length:to);
+  const seg=eq.slice(from,to);if(seg.length<2)return null;
+  const base=seg[0];const rets=[];for(let i=1;i<seg.length;i++)rets.push(seg[i]/seg[i-1]-1);
+  const total=seg[seg.length-1]/base-1;
+  const years=seg.length/bpy;
+  const cagr=years>0?Math.pow(seg[seg.length-1]/base,1/years)-1:NaN;
+  const mean=rets.reduce((a,x)=>a+x,0)/rets.length;
+  const sd=Math.sqrt(rets.reduce((a,x)=>a+(x-mean)**2,0)/rets.length);
+  const downside=rets.filter(x=>x<0);
+  const dsd=downside.length?Math.sqrt(downside.reduce((a,x)=>a+x*x,0)/rets.length):NaN;
+  const sharpe=sd>0?mean/sd*Math.sqrt(bpy):NaN;
+  const sortino=dsd>0?mean/dsd*Math.sqrt(bpy):NaN;
+  let peak=-Infinity,mdd=0;for(const v of seg){peak=Math.max(peak,v);mdd=Math.min(mdd,v/peak-1)}
+  const vol=sd*Math.sqrt(bpy);
+  const calmar=mdd<0?cagr/-mdd:NaN;
+  const tr=trades.filter(t=>t.entryIdx>=from&&t.exitIdx<to);
+  const wins=tr.filter(t=>t.ret>0),losses=tr.filter(t=>t.ret<=0);
+  const gp=wins.reduce((a,t)=>a+t.ret,0),gl=Math.abs(losses.reduce((a,t)=>a+t.ret,0));
+  return {total,cagr,sharpe,sortino,vol,mdd,calmar,
+    winRate:tr.length?wins.length/tr.length:NaN,
+    pf:gl>0?gp/gl:(gp>0?Infinity:NaN),
+    nTrades:tr.length,
+    avgBars:tr.length?tr.reduce((a,t)=>a+t.bars,0)/tr.length:NaN};
+}
+
+function exposure(posArr,from,to){let s=0;for(let i=from;i<to;i++)s+=posArr[i];return s/(to-from)}
+
+/* ============================ run & render ============================ */
+/* innerHTML below interpolates only static strategy names and computed numbers;
+   user-supplied strings (CSV filename) go through textContent only — no XSS path. */
+let wfResults = [];
+function readParams(st){
+  const p={};for(const pd of st.params){const el=$(`p_${st.id}_${pd.k}`);p[pd.k]=el?+el.value:pd.def}
+  if(st.id==="sma"||st.id==="ema"){if(p.fast>=p.slow)p.slow=p.fast+1}
+  return p;
+}
+
+function runAll(){
+  if(!bars)return;
+  const opts=getOpts();const iv=intervalGuess(bars);const bpy=IV_BPY[iv];
+  const n=bars.length;const splitIdx=Math.floor(n*(1-opts.oos));
+  const cols={close:bars.map(b=>b.c),high:bars.map(b=>b.h),low:bars.map(b=>b.l)};
+  results=[];
+  wfResults=[];
+  for(const st of STRATS){
+    const cb=$(`c_${st.id}`);if(cb&&!cb.checked)continue;
+    const p=readParams(st);
+    let target;try{target=st.signal(cols,p)}catch(e){console.error(st.id,e);continue}
+    const bt=backtest(bars,target,opts,bpy);
+    const full=metrics(bt.equity,bt.trades,bpy,0,n);
+    const is=opts.oos>0?metrics(bt.equity,bt.trades,bpy,0,splitIdx):null;
+    const oos=opts.oos>0?metrics(bt.equity,bt.trades,bpy,splitIdx,n):null;
+    results.push({st,p,bt,full,is,oos,exp:exposure(bt.posArr,0,n),splitIdx});
+  }
+  selected=results.find(r=>r.st.id!=="bh")||results[0];
+    // walk-forward validation (SMA crossover only)
+    if (opts.wfWindow>0&&opts.wfStep>0&&results.some(r=>r.st.id==="sma")){const wf=runWalkForward(bars,opts,bpy,opts.wfWindow,opts.wfStep);wfResults.push(wf);$("wfNote").textContent="Walk-forward: "+wf.windows+" windows of "+opts.wfWindow+" train / "+opts.wfStep+" test bars; avg OOS Sharpe: "+wf.avgSharpe.toFixed(2);$("wfPanel").classList.remove("hidden");}else{$("wfNote").textContent="";$("wfPanel").classList.add("hidden");}
+    renderResults();renderEquity();renderSelected();
+    $("btnExport").disabled=results.length===0;
+    setStatus(`Backtested ${results.length} strategies on ${dataLabel} (${iv}, ${n} bars).`,"ok");
+  }
+
+function renderResults(){
+  const opts=getOpts();const hasOos=opts.oos>0;
+  let h=`<tr><th>Strategy</th><th>Return</th><th>CAGR</th><th>Sharpe</th><th>Sortino</th><th>Max DD</th><th>Win %</th><th>PF</th><th>Trades</th><th>Exposure</th>`;
+  if(hasOos)h+=`<th>IS Return</th><th>OOS Return</th><th>OOS Sharpe</th>`;
+  h+=`</tr>`;
+  for(const r of results){
+    const m=r.full;const sel=selected&&r.st.id===selected.st.id?" sel":"";
+    h+=`<tr class="clickable${sel}" data-id="${r.st.id}">
+      <td><span class="swatch" style="background:${r.st.color}"></span> ${r.st.name}${r.st.params.length?" <span style='color:var(--muted)'>("+r.st.params.map(pd=>r.p[pd.k]).join(",")+")</span>":""}</td>
+      <td class="${cls(m.total)}">${pct(m.total)}</td><td class="${cls(m.cagr)}">${pct(m.cagr)}</td>
+      <td>${fmt(m.sharpe)}</td><td>${fmt(m.sortino)}</td><td class="neg">${pct(m.mdd)}</td>
+      <td>${pct(m.winRate,0)}</td><td>${fmt(m.pf)}</td><td>${m.nTrades}</td><td>${pct(r.exp,0)}</td>`;
+    if(hasOos)h+=`<td class="${cls(r.is.total)}">${pct(r.is.total)}</td><td class="${cls(r.oos.total)}">${pct(r.oos.total)}</td><td>${fmt(r.oos.sharpe)}</td>`;
+    h+=`</tr>`;
+  }
+  $("resultsTable").innerHTML=h;
+  $("resultsPanel").classList.remove("hidden");
+  $("splitNote").textContent=!results.length?"No strategies selected.":(hasOos?`In-sample = first ${results[0].splitIdx} bars; out-of-sample = last ${bars.length-results[0].splitIdx} bars. OOS is the honest column.`:"No OOS split set — every number here is in-sample.");
+  // render walk-forward table
+  let wfH="<tr><th>Window</th><th>OOS Sharpe</th><th>Trades</th></tr>";
+  for (let i = 0; i < (wfResults.length > 0 ? wfResults[0].windows : 0); i++) {
+    const sharpe = i < wfResults[0].oosSharpes.length ? wfResults[0].oosSharpes[i].toFixed(2) : "-";
+    const trades = i < wfResults[0].equitySummaries.length ? Math.round(wfResults[0].equitySummaries[i]) : "-";
+    wfH += "<tr><td>" + (i + 1) + "</td><td>" + sharpe + "</td><td>" + trades + "</td></tr>";
+  }
+  $("wfTable").innerHTML=wfH;
+  $("wfPanel").classList.toggle("hidden", wfResults.length === 0);
+  document.querySelectorAll("#resultsTable tr.clickable").forEach(tr=>{
+    tr.addEventListener("click",()=>{selected=results.find(r=>r.st.id===tr.dataset.id);renderResults();renderSelected()});
+  });
+}
+
+/* ---------- canvas helpers ---------- */
+function setupCanvas(cv,h){
+  const dpr=window.devicePixelRatio||1;const w=cv.parentElement.clientWidth;
+  cv.width=w*dpr;cv.height=h*dpr;cv.style.height=h+"px";
+  const ctx=cv.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  return {ctx,w,h};
+}
+function niceTicks(lo,hi,n){
+  const span=hi-lo;if(span<=0)return[lo];
+  const step0=span/n;const mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag;const step=(norm<1.5?1:norm<3?2:norm<7?5:10)*mag;
+  const out=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(v);return out;
+}
+function drawLineChart(cv,h,series,opts2){
+  const {ctx,w}=setupCanvas(cv,h);
+  const padL=64,padR=14,padT=12,padB=26;
+  const iw=w-padL-padR,ih=h-padT-padB;
+  let lo=Infinity,hi=-Infinity;
+  for(const s of series)for(const v of s.data){if(isFinite(v)){lo=Math.min(lo,v);hi=Math.max(hi,v)}}
+  if(!isFinite(lo)){lo=0;hi=1}
+  if(opts2&&opts2.log){lo=Math.log10(Math.max(lo,1e-9));hi=Math.log10(Math.max(hi,1e-9))}
+  if(hi-lo<1e-12){hi+=1;lo-=1}
+  const pad=(hi-lo)*0.06;lo-=pad;hi+=pad;
+  const n=Math.max(...series.map(s=>s.data.length));
+  const X=i=>padL+(n<=1?0:i/(n-1)*iw);
+  const Y=v=>{const vv=(opts2&&opts2.log)?Math.log10(Math.max(v,1e-9)):v;return padT+ih-(vv-lo)/(hi-lo)*ih};
+  ctx.strokeStyle="#2d3646";ctx.fillStyle="#8b98a9";ctx.font="10px sans-serif";ctx.lineWidth=1;
+  for(const t of niceTicks(lo,hi,5)){
+    const y=(opts2&&opts2.log)?padT+ih-(Math.log10(Math.max(t,1e-9))-lo)/(hi-lo)*ih:padT+ih-(t-lo)/(hi-lo)*ih;
+    if(y<padT-1||y>padT+ih+1)continue;
+    ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+    const lbl=(opts2&&opts2.log)?Math.pow(10,t):t;
+    ctx.fillText(Math.abs(lbl)>=1000?fmt(lbl,0):fmt(lbl,2),4,y+3);
+  }
+  if(bars&&bars.length===n){
+    const step=Math.max(1,Math.floor(n/6));
+    for(let i=0;i<n;i+=step){
+      const d=new Date(bars[i].t);const lbl=d.toISOString().slice(0,10);
+      ctx.fillText(lbl,Math.min(X(i),w-padR-56),h-8);
+    }
+  }
+  for(const s of series){
+    ctx.strokeStyle=s.color;ctx.lineWidth=s.width||1.6;ctx.beginPath();let started=false;
+    for(let i=0;i<s.data.length;i++){const v=s.data[i];if(!isFinite(v))continue;
+      const x=X(i),y=Y(v);if(!started){ctx.moveTo(x,y);started=true}else ctx.lineTo(x,y)}
+    ctx.stroke();
+    if(s.fill){ctx.lineTo(X(s.data.length-1),padT+ih);ctx.lineTo(X(0),padT+ih);ctx.closePath();
+      ctx.fillStyle=s.fill;ctx.fill()}
+    if(s.markers){for(const m of s.markers){
+      const x=X(m.i),y=Y(m.v);ctx.fillStyle=m.color;ctx.beginPath();
+      if(m.up){ctx.moveTo(x,y-5);ctx.lineTo(x-4,y+3);ctx.lineTo(x+4,y+3)}
+      else{ctx.moveTo(x,y+5);ctx.lineTo(x-4,y-3);ctx.lineTo(x+4,y-3)}
+      ctx.closePath();ctx.fill();
+    }}
+  }
+  return {X,Y,padL,padT,iw,ih};
+}
+
+function renderEquity(){
+  $("equityPanel").classList.remove("hidden");
+  const series=results.map(r=>({data:r.bt.equity,color:r.st.color,width:r.st.id==="bh"?1.2:1.7}));
+  drawLineChart($("equityChart"),320,series,{log:$("logScale").checked});
+  $("equityLegend").innerHTML=results.map(r=>`<span><span class="swatch" style="background:${r.st.color}"></span>${r.st.name}</span>`).join("");
+}
+
+function drawdownSeries(eq){let peak=-Infinity;return eq.map(v=>{peak=Math.max(peak,v);return (v/peak-1)*100})}
+
+function renderSelected(){
+  if(!selected)return;
+  const r=selected;
+  $("pricePanel").classList.remove("hidden");$("ddPanel").classList.remove("hidden");$("tradesPanel").classList.remove("hidden");
+  $("priceTitle").textContent=`Price & trades — ${r.st.name}`;
+  $("ddTitle").textContent=`Drawdown — ${r.st.name}`;
+  $("tradesTitle").textContent=`Trade log — ${r.st.name} (${r.bt.trades.length} trades)`;
+  const markers=[];
+  for(const t of r.bt.trades){
+    markers.push({i:t.entryIdx,v:t.entryPx,color:"#3fb950",up:true});
+    markers.push({i:t.exitIdx,v:t.exitPx,color:t.ret>0?"#4da3ff":"#f85149",up:false});
+  }
+  drawLineChart($("priceChart"),260,[{data:bars.map(b=>b.c),color:"#8b98a9",width:1.2,markers}]);
+  drawLineChart($("ddChart"),260,[{data:drawdownSeries(r.bt.equity),color:r.st.color,width:1.4,fill:"rgba(248,81,73,0.12)"}]);
+  let h=`<tr><th>#</th><th>Entry (UTC)</th><th>Exit (UTC)</th><th>Entry px</th><th>Exit px</th><th>Return</th><th>Bars</th><th>Exit reason</th></tr>`;
+  r.bt.trades.forEach((t,i)=>{
+    h+=`<tr><td>${i+1}</td><td>${dtFmt(t.entryT)}</td><td>${dtFmt(t.exitT)}</td>
+      <td>${fmt(t.entryPx)}</td><td>${fmt(t.exitPx)}</td>
+      <td class="${cls(t.ret)}">${pct(t.ret,2)}</td><td>${t.bars}</td><td>${t.reason}</td></tr>`;
+  });
+  if(!r.bt.trades.length)h+=`<tr><td colspan="8" style="text-align:left;color:var(--muted)">No trades triggered with these parameters.</td></tr>`;
+  $("tradesTable").innerHTML=h;
+}
+
+/* ---------- sweep ---------- */
+function runSweep(){
+  if(!bars)return;
+  const opts=getOpts();const iv=intervalGuess(bars);const bpy=IV_BPY[iv];
+  const n=bars.length;const splitIdx=Math.floor(n*(1-opts.oos));
+  const st=STRATS.find(s=>s.id==="sma");
+  const cols={close:bars.map(b=>b.c),high:bars.map(b=>b.h),low:bars.map(b=>b.l)};
+  const rows=[];
+  for(const fast of [5,10,15,20,25,30]){
+    for(const slow of [40,60,80,100,150,200]){
+      if(fast>=slow)continue;
+      const target=st.signal(cols,{fast,slow});
+      const bt=backtest(bars,target,opts,bpy);
+      const full=metrics(bt.equity,bt.trades,bpy,0,n);
+      const oos=opts.oos>0?metrics(bt.equity,bt.trades,bpy,splitIdx,n):null;
+      rows.push({fast,slow,full,oos});
+    }
+  }
+  rows.sort((a,b)=>(b.oos?b.oos.sharpe:b.full.sharpe)-(a.oos?a.oos.sharpe:a.full.sharpe));
+  sweepRows=rows;
+  let h=`<tr><th>Fast</th><th>Slow</th><th>Return</th><th>Sharpe</th><th>Max DD</th><th>Trades</th>`;
+  if(opts.oos>0)h+=`<th>OOS Return</th><th>OOS Sharpe</th><th>OOS Max DD</th>`;
+  h+=`</tr>`;
+  for(const r of rows.slice(0,12)){
+    h+=`<tr><td>${r.fast}</td><td>${r.slow}</td><td class="${cls(r.full.total)}">${pct(r.full.total)}</td>
+      <td>${fmt(r.full.sharpe)}</td><td class="neg">${pct(r.full.mdd)}</td><td>${r.full.nTrades}</td>`;
+    if(r.oos)h+=`<td class="${cls(r.oos.total)}">${pct(r.oos.total)}</td><td>${fmt(r.oos.sharpe)}</td><td class="neg">${pct(r.oos.mdd)}</td>`;
+    h+=`</tr>`;
+  }
+  $("sweepTable").innerHTML=h;
+  $("sweepPanel").classList.remove("hidden");
+  setStatus(`Sweep complete: ${rows.length} parameter combinations.`,"ok");
+}
+
+/* ---------- export ---------- */
+function exportCsv(){
+  const opts=getOpts();const hasOos=opts.oos>0;
+  const head=["strategy","params","total_return","cagr","sharpe","sortino","max_drawdown","win_rate","profit_factor","trades","exposure"];
+  if(hasOos)head.push("is_return","oos_return","oos_sharpe");
+  const lines=[head.join(",")];
+  for(const r of results){
+    const m=r.full;
+    const row=[r.st.name,JSON.stringify(r.p),m.total,m.cagr,m.sharpe,m.sortino,m.mdd,m.winRate,m.pf,m.nTrades,r.exp];
+    if(hasOos)row.push(r.is.total,r.oos.total,r.oos.sharpe);
+    lines.push(row.map(v=>typeof v==="string"&&v.includes(",")?`"${v}"`:v).join(","));
+  }
+  const blob=new Blob([lines.join("\n")],{type:"text/csv"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download=`backtest_${dataLabel.replace(/[^a-z0-9]+/gi,"_")}.csv`;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+
+/* ============================ UI wiring ============================ */
+function buildStratList(){
+  $("stratList").innerHTML=STRATS.map(st=>{
+    const params=st.params.map(pd=>
+      `<label>${pd.label}<input type="number" id="p_${st.id}_${pd.k}" value="${pd.def}" min="${pd.min}" max="${pd.max}" step="${pd.step||1}"></label>`).join("");
+    return `<div class="strat-row">
+      <span class="strat-name"><input type="checkbox" id="c_${st.id}" checked>
+      <span class="swatch" style="background:${st.color}"></span>${st.name}</span>${params}</div>`;
+  }).join("");
+}
+
+$("btnLive").addEventListener("click",async()=>{
+  const btn=$("btnLive");btn.disabled=true;
+  setStatus("Fetching Binance klines…");
+  try{
+    const sym=$("symbol").value,iv=$("interval").value,n=Math.min(3000,Math.max(200,+$("nBars").value||1000));
+    bars=await fetchKlines(sym,iv,n);
+    onDataReady(`${sym} ${iv} (Binance)`);
+    setStatus(`Loaded ${bars.length} live bars: ${dtFmt(bars[0].t)} → ${dtFmt(bars[bars.length-1].t)} UTC.`,"ok");
+  }catch(e){
+    setStatus(`Live fetch failed (${e.message}). Using synthetic fallback — click Run to proceed, or try again.`,"err");
+    bars=synthBars(Math.min(3000,Math.max(200,+$("nBars").value||1000)),7);
+    onDataReady("synthetic (live fetch failed)");
+  }finally{btn.disabled=false}
+});
+$("btnSynth").addEventListener("click",()=>{
+  const n=Math.min(3000,Math.max(200,+$("nBars").value||1000));
+  bars=synthBars(n,Math.floor(Math.random()*1e6));
+  onDataReady("synthetic daily");
+  setStatus(`Generated ${n} synthetic daily bars (regime-switching GBM, random seed). For offline testing only.`,"ok");
+});
+$("btnCsv").addEventListener("click",()=>$("csvFile").click());
+$("csvFile").addEventListener("change",async ev=>{
+  const f=ev.target.files[0];if(!f)return;
+  try{bars=parseCsv(await f.text());onDataReady(f.name);
+    setStatus(`Parsed ${bars.length} bars from ${f.name}.`,"ok");
+  }catch(e){setStatus("CSV parse error: "+e.message,"err")}
+  ev.target.value="";
+});
+$("btnRun").addEventListener("click",runAll);
+$("btnSweep").addEventListener("click",runSweep);
+$("btnExport").addEventListener("click",exportCsv);
+$("logScale").addEventListener("change",()=>{if(results.length)renderEquity()});
+let rsz=null;
+window.addEventListener("resize",()=>{clearTimeout(rsz);rsz=setTimeout(()=>{if(results.length){renderEquity();renderSelected()}},150)});
+
+buildStratList();
+/* auto-load synthetic so the page is never empty */
+bars=synthBars(1000,42);
+onDataReady("synthetic daily (default)");
+setStatus("Default synthetic data loaded. Click “Load live (Binance)” for real BTC/ETH history, then Run backtests.");
+  // walk-forward function (SMA crossover only)
+  function runWalkForward(bars, opts, bpy, window, step) {
+    const n = bars.length;
+    const trainSize = Math.floor(n * (window / 100));
+    const testSize = Math.floor(n * (step / 100));
+    const windows = Math.max(1, Math.floor((n - trainSize) / testSize));
+    const oosSharpes = new Array(windows).fill(NaN);
+    const equitySummaries = new Array(windows).fill(0);
+    const st = STRATS.find(s => s.id === "sma");
+    for (let w = 0; w < windows; w++) {
+      const dataStart = w * step;
+      const trainEnd = dataStart + trainSize;
+      const testEnd = Math.min(trainEnd + testSize, n);
+      if (trainEnd <= dataStart || testEnd <= trainEnd) { continue; }
+      const trainBars = bars.slice(dataStart, trainEnd);
+      const testBars = bars.slice(trainEnd, testEnd);
+      if (trainBars.length < 50 || testBars.length < 10) { continue; }
+      const cols = { close: trainBars.map(b => b.c), high: trainBars.map(b => b.h), low: trainBars.map(b => b.l) };
+      // train: find best SMA params from a grid
+      let bestSharpe = -Infinity;
+      let bestFast = 20, bestSlow = 60;
+      for (const fast of [5, 10, 15, 20, 25, 30]) {
+        for (const slow of [40, 60, 80, 100, 150, 200]) {
+          if (fast >= slow) continue;
+          const target = st.signal(cols, { fast, slow });
+          if (typeof target === "undefined") continue;
+          const bt = backtest(trainBars, target, { capital: opts.capital, fee: opts.fee / 1e4, slip: opts.slip / 1e4, stop: opts.stop / 100, oos: 0 }, bpy);
+          const m = metrics(bt.equity, bt.trades, bpy, 0, trainBars.length);
+          if (m.sharpe > bestSharpe) { bestSharpe = m.sharpe; bestFast = fast; bestSlow = slow; }
+        }
+      }
+      // test with best params
+      const testTarget = st.signal({ close: testBars.map(b => b.c), high: testBars.map(b => b.h), low: testBars.map(b => b.l) }, { fast: bestFast, slow: bestSlow });
+      const bt = backtest(testBars, testTarget, { capital: opts.capital, fee: opts.fee / 1e4, slip: opts.slip / 1e4, stop: opts.stop / 100, oos: 0 }, bpy);
+      oosSharpes[w] = metrics(bt.equity, bt.trades, bpy, 0, testBars.length).sharpe;
+      equitySummaries[w] = bt.equity.reduce((a, v) => a + v, 0) / testBars.length;
+    }
+    const validSharpes = oosSharpes.filter(x => !isNaN(x));
+    const avgSharpe = validSharpes.length > 0 ? validSharpes.reduce((a, b) => a + b, 0) / validSharpes.length : NaN;
+    return { windows, avgSharpe, oosSharpes, equitySummaries };
+  }
+runAll();
+</script>
+</body>
+</html>
