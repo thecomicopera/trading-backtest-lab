@@ -1,4 +1,4 @@
-# Crypto Backtest Lab
+# Trading Backtest Lab
 
 A single-file dashboard for backtesting and comparing crypto and forex trading algorithms. No install, no build step, no API key, no dependencies — one HTML file with vanilla JS and Canvas charts.
 
