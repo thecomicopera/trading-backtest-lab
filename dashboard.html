@@ -59,14 +59,19 @@
 </head>
 <body>
 <h1>Crypto Backtest Lab <span class="badge" id="dataBadge">no data</span></h1>
-<div class="sub">Compare algorithmic strategies on real or synthetic OHLCV. Signals execute next-bar open — no lookahead. Long-only, single asset.</div>
+<div class="sub">Compare algorithmic strategies on crypto or forex OHLCV. Signals execute next-bar open — no lookahead. Long-only, single asset.</div>
 
 <div class="panel">
   <h2>Data</h2>
   <div class="row">
+    <label>Market<select id="market">
+      <option value="crypto">Crypto (Binance)</option>
+      <option value="forex">Forex (Kraken)</option>
+    </select></label>
     <label>Symbol<select id="symbol">
       <option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>BNBUSDT</option>
       <option>XRPUSDT</option><option>DOGEUSDT</option><option>ADAUSDT</option><option>LINKUSDT</option>
+      <option>PAXGUSDT</option><option>XAUTUSDT</option><option>EURUSDT</option>
     </select></label>
     <label>Interval<select id="interval"><option value="1d">1d</option><option value="4h">4h</option><option value="1h">1h</option></select></label>
     <label>Bars<input type="number" id="nBars" value="1000" min="200" max="3000" step="100"></label>
@@ -75,7 +80,7 @@
     <button id="btnCsv" class="secondary">Upload CSV</button>
     <input type="file" id="csvFile" accept=".csv" class="hidden">
   </div>
-  <div id="status">Load data to begin. Live data uses Binance public klines (no key needed); synthetic works fully offline.</div>
+  <div id="status">Load data to begin. Crypto uses Binance public klines; forex majors use Kraken public OHLC (most recent 720 bars per interval) — both keyless. Synthetic works fully offline.</div>
 </div>
 
 <div class="panel">
@@ -150,9 +155,9 @@
   <div class="note">
     • Signal computed on bar <i>t</i> close → position entered/exited at bar <i>t+1</i> open (no lookahead bias).<br>
     • Fees + slippage charged on every fill; stop-loss fills at the stop price minus slippage when the bar's low breaches it (optimistic vs. gap-through risk).<br>
-    • Sharpe/Sortino annualized with √(bars/year): 365 for 1d, 2190 for 4h, 8760 for 1h. Risk-free rate assumed 0.<br>
+    • Sharpe/Sortino annualized with √(bars/year): 365 for 1d, 2190 for 4h, 8760 for 1h. Kraken forex trades 24/7 on-venue — weekend bars carry real volume — so the same factors apply (unlike interbank 24/5 forex). Risk-free rate assumed 0.<br>
     • Long-only, 100% position sizing, one asset. No funding costs, no liquidation modeling, no partial fills, no maker rebates.<br>
-    • Survivorship bias: you picked the coin knowing it survived. Backtest ≠ future performance.
+    • Survivorship bias: you picked the instrument knowing it survived. Backtest ≠ future performance.
   </div>
 </div>
 
@@ -166,6 +171,9 @@ const cls = x => x>0?"pos":(x<0?"neg":"");
 const COLORS = ["#4da3ff","#3fb950","#f0883e","#bc8cff","#f85149","#39c5cf","#d29922","#ff7b9c","#7ee787"];
 const IV_MS = {"1h":3600e3,"4h":14400e3,"1d":86400e3};
 const IV_BPY = {"1h":8760,"4h":2190,"1d":365};
+const KRAKEN_IV = {"1h":60,"4h":240,"1d":1440};
+const CRYPTO_SYMS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","LINKUSDT","PAXGUSDT","XAUTUSDT","EURUSDT"];
+const FX_SYMS=[["EURUSD","EUR/USD"],["GBPUSD","GBP/USD"],["USDJPY","USD/JPY"],["USDCHF","USD/CHF"],["USDCAD","USD/CAD"],["AUDUSD","AUD/USD"],["AUDJPY","AUD/JPY"],["EURAUD","EUR/AUD"],["EURCAD","EUR/CAD"],["EURCHF","EUR/CHF"],["EURGBP","EUR/GBP"],["EURJPY","EUR/JPY"]];
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function gauss(rng){let u=0,v=0;while(!u)u=rng();while(!v)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
 function setStatus(msg,kind){const s=$("status");s.textContent=msg;s.className=kind||""}
@@ -214,7 +222,7 @@ const STRATS = [
 ];
 
 /* ============================ data ============================ */
-let bars=null, dataLabel="", results=[], selected=null, sweepRows=[];
+let bars=null, dataLabel="", dataMarket="crypto", results=[], selected=null, sweepRows=[];
 
 function synthBars(n,seed){
   const rng=mulberry32(seed||42);const out=[];let px=30000,vol=0.03,drift=0.0008,regime=0,left=0;
@@ -252,6 +260,22 @@ async function fetchKlines(sym,iv,n){
   throw lastErr||new Error("fetch failed");
 }
 
+async function fetchKraken(pair,iv,n){
+  /* Kraken public OHLC serves only the most recent 720 bars per interval;
+     `since` polls forward, it cannot page into older history. */
+  const minutes=KRAKEN_IV[iv], ivMs=minutes*60e3;
+  const url=`https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${minutes}`;
+  const r=await fetch(url);if(!r.ok)throw new Error("HTTP "+r.status);
+  const j=await r.json();
+  if(j.error&&j.error.length)throw new Error(j.error.join("; "));
+  const key=Object.keys(j.result).find(k=>k!=="last");
+  const rows=(j.result[key]||[]);
+  const out=rows.map(row=>({t:row[0]*1000,o:+row[1],h:+row[2],l:+row[3],c:+row[4],v:+row[6]}));
+  if(out.length&&out[out.length-1].t+ivMs>Date.now())out.pop(); /* drop forming bar */
+  if(out.length<50)throw new Error("only "+out.length+" bars available for "+pair);
+  return out.slice(-Math.min(n,720));
+}
+
 function parseCsv(text){
   const lines=text.trim().split(/\r?\n/);if(lines.length<50)throw new Error("CSV needs ≥50 rows");
   const head=lines[0].toLowerCase().split(/[,;\t]/).map(s=>s.trim().replace(/"/g,""));
@@ -283,7 +307,9 @@ function parseCsv(text){
 }
 
 function intervalGuess(b){
-  if(b.length<2)return "1d";const d=b[1].t-b[0].t;
+  if(b.length<2)return "1d";
+  const diffs=[];for(let i=1;i<Math.min(b.length,25);i++)diffs.push(b[i].t-b[i-1].t);
+  diffs.sort((a,b)=>a-b);const d=diffs[Math.floor(diffs.length/2)]; /* median survives weekend gaps */
   return d<=4000e3?"1h":(d<=16000e3?"4h":"1d");
 }
 
@@ -369,7 +395,7 @@ function readParams(st){
 
 function runAll(){
   if(!bars)return;
-  const opts=getOpts();const iv=intervalGuess(bars);const bpy=IV_BPY[iv];
+  const opts=getOpts();const iv=intervalGuess(bars);const bpy=IV_BPY[iv]; /* Kraken forex trades 24/7 on-venue, same factors as crypto */
   const n=bars.length;const splitIdx=Math.floor(n*(1-opts.oos));
   const cols={close:bars.map(b=>b.c),high:bars.map(b=>b.h),low:bars.map(b=>b.l)};
   results=[];
@@ -518,7 +544,7 @@ function renderSelected(){
 /* ---------- sweep ---------- */
 function runSweep(){
   if(!bars)return;
-  const opts=getOpts();const iv=intervalGuess(bars);const bpy=IV_BPY[iv];
+  const opts=getOpts();const iv=intervalGuess(bars);const bpy=IV_BPY[iv]; /* Kraken forex trades 24/7 on-venue, same factors as crypto */
   const n=bars.length;const splitIdx=Math.floor(n*(1-opts.oos));
   const st=STRATS.find(s=>s.id==="sma");
   const cols={close:bars.map(b=>b.c),high:bars.map(b=>b.h),low:bars.map(b=>b.l)};
@@ -580,28 +606,36 @@ function buildStratList(){
 
 $("btnLive").addEventListener("click",async()=>{
   const btn=$("btnLive");btn.disabled=true;
-  setStatus("Fetching Binance klines…");
+  const mk=$("market").value;
+  setStatus(mk==="forex"?"Fetching Kraken OHLC (forex)…":"Fetching Binance klines…");
   try{
     const sym=$("symbol").value,iv=$("interval").value,n=Math.min(3000,Math.max(200,+$("nBars").value||1000));
-    bars=await fetchKlines(sym,iv,n);
-    onDataReady(`${sym} ${iv} (Binance)`);
+    if(mk==="forex"){
+      bars=await fetchKraken(sym,iv,n);dataMarket="forex";
+      onDataReady(`${sym} ${iv} (Kraken)`);
+    }else{
+      bars=await fetchKlines(sym,iv,n);dataMarket="crypto";
+      onDataReady(`${sym} ${iv} (Binance)`);
+    }
     setStatus(`Loaded ${bars.length} live bars: ${dtFmt(bars[0].t)} → ${dtFmt(bars[bars.length-1].t)} UTC.`,"ok");
   }catch(e){
     setStatus(`Live fetch failed (${e.message}). Using synthetic fallback — click Run to proceed, or try again.`,"err");
     bars=synthBars(Math.min(3000,Math.max(200,+$("nBars").value||1000)),7);
+    dataMarket="crypto";
     onDataReady("synthetic (live fetch failed)");
   }finally{btn.disabled=false}
 });
 $("btnSynth").addEventListener("click",()=>{
   const n=Math.min(3000,Math.max(200,+$("nBars").value||1000));
   bars=synthBars(n,Math.floor(Math.random()*1e6));
+  dataMarket="crypto"; /* generator is 24/7 */
   onDataReady("synthetic daily");
   setStatus(`Generated ${n} synthetic daily bars (regime-switching GBM, random seed). For offline testing only.`,"ok");
 });
 $("btnCsv").addEventListener("click",()=>$("csvFile").click());
 $("csvFile").addEventListener("change",async ev=>{
   const f=ev.target.files[0];if(!f)return;
-  try{bars=parseCsv(await f.text());onDataReady(f.name);
+  try{bars=parseCsv(await f.text());dataMarket=$("market").value;onDataReady(f.name);
     setStatus(`Parsed ${bars.length} bars from ${f.name}.`,"ok");
   }catch(e){setStatus("CSV parse error: "+e.message,"err")}
   ev.target.value="";
@@ -613,11 +647,25 @@ $("logScale").addEventListener("change",()=>{if(results.length)renderEquity()});
 let rsz=null;
 window.addEventListener("resize",()=>{clearTimeout(rsz);rsz=setTimeout(()=>{if(results.length){renderEquity();renderSelected()}},150)});
 
+function syncMarketUI(){
+  /* innerHTML is safe here: option markup is built only from the static
+     CRYPTO_SYMS / FX_SYMS constants above — no user input reaches it. */
+  const mk=$("market").value;
+  $("symbol").innerHTML=mk==="forex"
+    ?FX_SYMS.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")
+    :CRYPTO_SYMS.map(s=>`<option>${s}</option>`).join("");
+  $("btnLive").textContent=mk==="forex"?"Load live (Kraken)":"Load live (Binance)";
+  const nb=$("nBars");
+  if(mk==="forex"){nb.max=720;if(+nb.value>720)nb.value=720;}else{nb.max=3000;}
+}
+$("market").addEventListener("change",syncMarketUI);
+
 buildStratList();
+syncMarketUI();
 /* auto-load synthetic so the page is never empty */
 bars=synthBars(1000,42);
 onDataReady("synthetic daily (default)");
-setStatus("Default synthetic data loaded. Click “Load live (Binance)” for real BTC/ETH history, then Run backtests.");
+setStatus("Default synthetic data loaded. Pick Crypto (Binance) or Forex (Kraken) and click Load live for real history — both keyless — then Run backtests.");
   // walk-forward function (SMA crossover only)
   function runWalkForward(bars, opts, bpy, window, step) {
     const n = bars.length;

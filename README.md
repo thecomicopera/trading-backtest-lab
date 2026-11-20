@@ -1,6 +1,6 @@
 # Crypto Backtest Lab
 
-A single-file dashboard for backtesting and comparing crypto trading algorithms. No install, no build step, no API key, no dependencies — one HTML file with vanilla JS and Canvas charts.
+A single-file dashboard for backtesting and comparing crypto and forex trading algorithms. No install, no build step, no API key, no dependencies — one HTML file with vanilla JS and Canvas charts.
 
 ## Quick start
 
@@ -12,9 +12,16 @@ A single-file dashboard for backtesting and comparing crypto trading algorithms.
 
 | Source | How | Notes |
 |---|---|---|
-| **Live Binance** | Pick symbol (BTC/ETH/SOL/BNB/XRP/DOGE/ADA/LINK vs USDT), interval (1h/4h/1d), bar count (200–3000), click *Load live* | Public klines endpoint — no key, no account. Falls back to `data-api.binance.vision`, then to synthetic data if both fail. |
+| **Live crypto (Binance)** | Market = Crypto. Symbols: BTC/ETH/SOL/BNB/XRP/DOGE/ADA/LINK vs USDT, plus **PAXGUSDT / XAUTUSDT** (tokenized gold ≈ spot gold) and **EURUSDT** (EUR/USD proxy). Interval 1h/4h/1d, 200–3000 bars. | Public klines — no key, no account. Falls back to `data-api.binance.vision` (the primary `api.binance.com` is geo-blocked in some regions, e.g. US), then to synthetic data. |
+| **Live forex (Kraken)** | Market = Forex. All six majors — **EUR/USD, GBP/USD, USD/JPY, USD/CHF, USD/CAD, AUD/USD** — plus AUD/JPY and EUR crosses (AUD, CAD, CHF, GBP, JPY). Interval 1h/4h/1d. | Kraken public OHLC — no key. Hard cap: **most recent 720 bars per interval** (1d ≈ 2 years, 4h ≈ 120 days, 1h ≈ 30 days); `since` cannot page into older history. Bar count auto-caps at 720 in forex mode. |
 | **Synthetic** | Click *Synthetic data* | Regime-switching GBM with volatility clustering, random seed. Fully offline. For testing the tool, not for finding edges. |
 | **CSV upload** | Click *Upload CSV* | Header row with `time/open/high/low/close/volume` (case-insensitive, comma/semicolon/tab). Only `close` is required — missing OHLC columns are reconstructed. Timestamps: ISO dates or unix seconds/ms. ≥50 rows. |
+
+### Forex notes
+
+- Kraken's forex pairs trade **24/7 on-venue** — weekend bars carry real (thinner) volume, unlike interbank 24/5 forex. The series is therefore annualized with the same √365/√2190/√8760 factors as crypto. Weekend liquidity is lower; treat weekend-heavy signals with suspicion.
+- The forming (incomplete) last bar is dropped on load.
+- For deeper forex history (daily ECB reference rates back to 1999, 30+ currencies), download from [Frankfurter](https://api.frankfurter.dev/v1/2020-01-01..2024-01-01?from=EUR&to=USD) and convert to the CSV format below — note it is close-only, so OHLC-dependent indicators (ATR, Donchian, stops) see reconstructed flat bars.
 
 ## Running backtests
 
@@ -65,8 +72,8 @@ The panel below the sweep table re-optimizes the SMA crossover on rolling window
 - Fees + slippage on every fill; stop fills assumed at the stop price (optimistic vs. real gap-through risk).
 - Sharpe/Sortino annualized with √(bars/year): 365 for 1d, 2190 for 4h, 8760 for 1h. Risk-free rate 0.
 - Long-only, 100% position sizing, single asset. No funding costs, liquidation modeling, partial fills, or maker rebates.
-- Survivorship bias: you picked a coin knowing it survived. **Backtest ≠ future performance.**
+- Survivorship bias: you picked an instrument knowing it survived. **Backtest ≠ future performance.**
 
 ## Privacy
 
-Everything runs locally in your browser. The only network requests are unauthenticated GETs to Binance's public klines endpoints when you click *Load live*. No telemetry, no cookies, no accounts, no data upload — CSV files are parsed in-page and never leave your machine.
+Everything runs locally in your browser. The only network requests are unauthenticated GETs to Binance's public klines endpoints and Kraken's public OHLC endpoint when you click *Load live*. No telemetry, no cookies, no accounts, no data upload — CSV files are parsed in-page and never leave your machine.
